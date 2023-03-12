@@ -1,3 +1,5 @@
+use core::slice::SlicePattern;
+
 use anchor_lang::prelude::*;
 use anchor_spl::token::{
     self, spl_token::instruction::AuthorityType, CloseAccount, Mint, SetAuthority, Token,
@@ -9,6 +11,16 @@ const CLIENT_SEED: &str = "DSYNC_CLIENT";
 const VAULT_SEED: &str = "DSYNC_VAULT";
 const AUTHORITY_SEED: &str = "DSYNC_AUTHORITY";
 const JOB_SEED: &str = "DSYNC_JOB";
+
+#[derive(Clone, Debug, PartialEq, AnchorSerialize, AnchorDeserialize, Copy)]
+pub enum JobState {
+    PENDING,
+    PUBLISHED,
+    ACTIVE,
+    VALIDATED,
+    COMPLETED,
+    CANCELED,
+}
 
 #[program]
 pub mod dsync_rust {
@@ -70,6 +82,25 @@ pub mod dsync_rust {
         // )?;
         Ok(())
     }
+
+    pub fn cancel_job(ctx: Context<CancelJob>) -> Result<()> {
+        let _task = &mut ctx.accounts.task;
+        _task.state = JobState::CANCELED;
+
+        token::transfer(
+            ctx.accounts.into_transfer_to_client_context(),
+            ctx.accounts.task.price,
+        )?;
+        // token::set_authority(
+        //     ctx.accounts.into_set_authority_context(),
+        //     AuthorityType::AccountOwner,
+        //     Some(*ctx.program_id),
+        // )?;
+        Ok(())
+    }
+
+    
+
 }
 
 #[derive(Accounts)]
@@ -107,7 +138,7 @@ pub struct InitializeJob<'info> {
     #[account(
         init,
         payer = owner,
-        seeds = [VAULT_SEED.as_bytes().as_ref(), &task.job_id.as_ref()],
+        seeds = [VAULT_SEED.as_bytes(), &task.job_id.as_ref()],
         bump,
         token::mint = currency,
         token::authority = vault
@@ -134,23 +165,30 @@ pub struct PublishJob<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-impl<'info> PublishJob<'info> {
-    fn into_transfer_to_pda_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
-        let cpi_accounts = Transfer {
-            from: self.client_token_account.to_account_info(),
-            to: self.vault.to_account_info(),
-            authority: self.owner.to_account_info(),
-        };
-        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
-    }
+#[derive(Accounts)]
+pub struct CancelJob<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub task: Box<Account<'info, Job>>,
+    #[account(mut)]
+    pub vault: Box<Account<'info, TokenAccount>>,
+    pub client_token_account: Box<Account<'info, TokenAccount>>,
+    pub currency: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
+}
 
-    fn into_set_authority_context(&self) -> CpiContext<'_, '_, '_, 'info, SetAuthority<'info>> {
-        let cpi_accounts = SetAuthority {
-            account_or_mint: self.vault.to_account_info(),
-            current_authority: self.owner.to_account_info(),
-        };
-        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
-    }
+#[derive(Accounts)]
+pub struct StartJob<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub task: Box<Account<'info, Job>>,
+    // #[account(mut)]
+    // pub vault: Box<Account<'info, TokenAccount>>,
+    // pub client_token_account: Box<Account<'info, TokenAccount>>,
+    // pub currency: Account<'info, Mint>,
+    // pub token_program: Program<'info, Token>,
 }
 
 #[account]
@@ -158,10 +196,6 @@ pub struct Client {
     pub bump: u8,
     pub owner: Pubkey,
     pub job_count: u64,
-}
-
-impl Client {
-    const SPACE: usize = 32 + 1 + 8 + 8;
 }
 
 #[account]
@@ -191,24 +225,57 @@ pub struct Job {
     pub vault_token_account: Pubkey,
 }
 
-impl Job {
-    // const SPACE: usize = 1 + 8 + 32 + 32 + 32 + 32 + (4 + 10) + 8 + (1 + 32) + (4 + 20) + 8 + 8 + 8 + 1 + (32 * 5) + 8;
-    const SPACE: usize = 1 + (4 + 10) + (1 + 32) + (4 + 20) + 1 + (32 * 5 + 4) + (8 * 6);
-    // const SEEDS = [owner.key.as_ref(), CLIENT_SEED.as_bytes(), &client.job_count.to_le_bytes()]
-}
-
-#[derive(Clone, Debug, PartialEq, AnchorSerialize, AnchorDeserialize, Copy)]
-pub enum JobState {
-    PENDING,
-    PUBLISHED,
-    ACTIVE,
-    VALIDATED,
-    COMPLETED,
-    CANCELED,
-}
-
 impl Default for JobState {
     fn default() -> Self {
         JobState::PENDING
     }
+}
+
+impl<'info> PublishJob<'info> {
+    fn into_transfer_to_pda_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: self.client_token_account.to_account_info(),
+            to: self.vault.to_account_info(),
+            authority: self.vault.to_account_info(),
+        };
+        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+    }
+
+    // fn into_set_authority_context(&self) -> CpiContext<'_, '_, '_, 'info, SetAuthority<'info>> {
+    //     let cpi_accounts = SetAuthority {
+    //         account_or_mint: self.vault.to_account_info(),
+    //         current_authority: self.owner.to_account_info(),
+    //     };
+    //     CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+    // }
+}
+
+impl<'info> CancelJob<'info> {
+    fn into_transfer_to_client_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: self.vault.to_account_info(),
+            to: self.client_token_account.to_account_info(),
+            authority: self.vault.to_account_info(),
+        };
+        let seeds = vec![
+            VAULT_SEED.as_bytes(),
+            &self.task.job_id.as_ref(),
+            &self.task.bump.to_le_bytes(),
+        ];
+        CpiContext::new_with_signer(
+            self.token_program.to_account_info(), 
+            cpi_accounts,
+            &[seeds.as_slice()]
+        )
+    }
+}
+
+impl Client {
+    const SPACE: usize = 32 + 1 + 8 + 8;
+}
+
+impl Job {
+    // const SPACE: usize = 1 + 8 + 32 + 32 + 32 + 32 + (4 + 10) + 8 + (1 + 32) + (4 + 20) + 8 + 8 + 8 + 1 + (32 * 5) + 8;
+    const SPACE: usize = 1 + (4 + 10) + (1 + 32) + (4 + 20) + 1 + (32 * 5 + 4) + (8 * 6);
+    // const SEEDS = [owner.key.as_ref(), CLIENT_SEED.as_bytes(), &client.job_count.to_le_bytes()]
 }
