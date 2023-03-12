@@ -77,18 +77,15 @@ pub mod dsync_rust {
     }
 
     pub fn publish_job(ctx: Context<PublishJob>) -> Result<()> {
-        let _task = &mut ctx.accounts.task;
+        let _task = &mut ctx.accounts.job;
         _task.state = JobState::PUBLISHED;
 
         token::transfer(
             ctx.accounts.into_transfer_to_pda_context(),
-            ctx.accounts.task.price,
+            ctx.accounts.job.price,
         )?;
-        // token::set_authority(
-        //     ctx.accounts.into_set_authority_context(),
-        //     AuthorityType::AccountOwner,
-        //     Some(*ctx.program_id),
-        // )?;
+
+        
         Ok(())
     }
 
@@ -209,11 +206,18 @@ pub struct InitializeJob<'info> {
 #[derive(Accounts)]
 pub struct PublishJob<'info> {
     #[account(mut)]
-    pub owner: Signer<'info>,
-    #[account(mut)]
-    pub task: Box<Account<'info, Job>>,
-    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), &job.client.as_ref()], bump=job.bump)]
+    pub job: Box<Account<'info, Job>>,
+    #[account(
+        mut, 
+        // seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()], 
+        // bump=vault.bump,
+        constraint = vault.mint == currency.to_account_info().key.clone()
+    )]
     pub vault: Box<Account<'info, TokenAccount>>,
+    
+    #[account(mut, constraint = client_token_account.mint == vault.mint)]
     pub client_token_account: Box<Account<'info, TokenAccount>>,
     pub currency: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
@@ -329,9 +333,9 @@ pub struct Job {
     pub deadline: i64,     // 8 bytes
 
     pub vault_token_account: Pubkey, // 32 bytes
-                                     // pub client_token_account: Pubkey,   // 32 bytes
-                                     // pub validator_token_account: Pubkey,    // 32 bytes
-                                     // pub winner_token_account: Pubkey,  // 32 bytes
+    // pub client_token_account: Pubkey,   // 32 bytes
+    // pub validator_token_account: Pubkey,    // 32 bytes
+    // pub winner_token_account: Pubkey,  // 32 bytes
 }
 
 #[account]
@@ -362,14 +366,6 @@ impl<'info> PublishJob<'info> {
         };
         CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
     }
-
-    // fn into_set_authority_context(&self) -> CpiContext<'_, '_, '_, 'info, SetAuthority<'info>> {
-    //     let cpi_accounts = SetAuthority {
-    //         account_or_mint: self.vault.to_account_info(),
-    //         current_authority: self.owner.to_account_info(),
-    //     };
-    //     CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
-    // }
 }
 
 impl<'info> CancelJob<'info> {
