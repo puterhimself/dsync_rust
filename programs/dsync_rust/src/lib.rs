@@ -133,16 +133,12 @@ pub mod dsync_rust {
         Ok(())
     }
 
-    pub fn post_submission(ctx: Context<PostSubmission>, _hash: String) -> Result<()> {
-        let _task = &mut ctx.accounts.task;
+    pub fn publish_submission(ctx: Context<PublishSubmission>, _hash: String) -> Result<()> {
         let _sub = &mut ctx.accounts.submission;
-
-        // _task.submission_count += 1;
-        _sub.bump = *ctx.bumps.get(SUBMISSION_SEED).unwrap();
-        _sub.job = _task.to_account_info().key.clone();
-        _sub.worker = *ctx.accounts.worker.key;
+        
         _sub.submission_date = Clock::get().unwrap().unix_timestamp;
         _sub.submission_hash = _hash;
+
 
         Ok(())
     }
@@ -292,26 +288,11 @@ pub struct StartJob<'info> {
 }
 
 #[derive(Accounts)]
-pub struct PostSubmission<'info> {
+pub struct PublishSubmission<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    pub worker: AccountInfo<'info>,
-    #[account(mut)]
-    pub task: Box<Account<'info, Job>>,
-    #[account(
-        init,
-        seeds = [SUBMISSION_SEED.as_bytes(), worker.key.as_ref(), &task.to_account_info().key.clone().as_ref()],
-        bump,
-        payer = signer,
-        space = Submission::SPACE
-    )]
+    #[account(mut, seeds = [SUBMISSION_SEED.as_bytes(), &submission.worker.as_ref(), &submission.job.as_ref()], bump=submission.bump)]
     pub submission: Box<Account<'info, Submission>>,
-    pub system_program: Program<'info, System>,
-    // #[account(mut)]
-    // pub vault: Box<Account<'info, TokenAccount>>,
-    // pub client_token_account: Box<Account<'info, TokenAccount>>,
-    // pub currency: Account<'info, Mint>,
-    // pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
