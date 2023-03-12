@@ -1,5 +1,3 @@
-// use core::slice::SlicePattern;
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{
     self, spl_token::instruction::AuthorityType, CloseAccount, Mint, SetAuthority, Token,
@@ -144,30 +142,42 @@ pub mod dsync_rust {
     }
 
     pub fn validate_submission(ctx: Context<ValidateSubmission>) -> Result<()> {
-        let _task = &mut ctx.accounts.task;
+        let _task = &mut ctx.accounts.job;
         let _sub = &mut ctx.accounts.submission;
 
+        if _task.state == JobState::CANCELED {
+            panic!("DSYNC_ERROR: Cannot Validate a canceled job")
+        }
+        if _task.state == JobState::COMPLETED  || _task.state == JobState::VALIDATED{
+            panic!("DSYNC_ERROR: Job Done!, try starting another job")
+        }
+
         _task.state = JobState::VALIDATED;
-        _sub.is_validated = true;
-        //for now only one approval process for winning
-        // at scale this will just validate a submission without declaring it a winner
-        _sub.is_winner = true;
+        _task.winner = _sub.worker;
+        _task.winning_submission = _sub.to_account_info().key.clone();
+
         Ok(())
     }
 
     pub fn calim_reward(ctx: Context<ClaimReward>) -> Result<()> {
-        let _task = &mut ctx.accounts.task;
+        let _task = &mut ctx.accounts.job;
         let _sub = &mut ctx.accounts.submission;
 
-        _task.state = JobState::COMPLETED;
+        // _task.state = JobState::COMPLETED;
         // _sub.is_claimed = true;
+        let seeds = vec![
+            VAULT_SEED.as_bytes(),
+            ctx.accounts.job.to_account_info().key.clone().as_ref(),
+        ];
 
         token::transfer(
             ctx.accounts.into_transfer_to_worker_context(),
-            ctx.accounts.task.price,
+            // &[seeds.as_slice()],
+            ctx.accounts.job.price,
         )?;
         Ok(())
     }
+
 }
 
 #[derive(Accounts)]
@@ -177,7 +187,7 @@ pub struct InitializeClient<'info> {
     pub signer: Signer<'info>,
     #[account(
         init,
-        seeds = [CLIENT_SEED.as_bytes(), _client.as_ref()],
+        seeds = [CLIENT_SEED.as_bytes().as_ref(), _client.as_ref()],
         bump,
         payer = signer,
         space = Client::SPACE
@@ -192,11 +202,11 @@ pub struct InitializeClient<'info> {
 pub struct InitializeJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), client.owner.as_ref()], bump=client.bump)]
+    #[account(mut, seeds = [CLIENT_SEED.as_bytes().as_ref(), client.owner.as_ref()], bump=client.bump)]
     pub client: Box<Account<'info, Client>>,
     #[account(
         init,
-        seeds = [JOB_SEED.as_bytes(), client.owner.as_ref(), &client.job_count.to_le_bytes()],
+        seeds = [JOB_SEED.as_bytes().as_ref(), client.owner.as_ref(), &client.job_count.to_le_bytes()],
         bump,
         payer = signer,
         space = Job::SPACE,
@@ -204,7 +214,7 @@ pub struct InitializeJob<'info> {
     pub job: Box<Account<'info, Job>>,
     #[account(
         init,
-        seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()],
+        seeds = [VAULT_SEED.as_bytes().as_ref(), &job.to_account_info().key.clone().as_ref()],
         bump,
         payer = signer,
         token::mint = currency,
@@ -225,11 +235,11 @@ pub struct InitializeJob<'info> {
 pub struct PublishJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [JOB_SEED.as_bytes(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
+    #[account(mut, seeds = [JOB_SEED.as_bytes().as_ref(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
     pub job: Box<Account<'info, Job>>,
     #[account(
         mut, 
-        seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()], 
+        seeds = [VAULT_SEED.as_bytes().as_ref(), &job.to_account_info().key.clone().as_ref()], 
         bump=job.vault_bump,
         constraint = vault.mint == currency.to_account_info().key.clone()
     )]
@@ -247,13 +257,13 @@ pub struct PublishJob<'info> {
 
 #[derive(Accounts)]
 pub struct CancelJob<'info> {
-    #[account(mut)]
+    #[account(mut, constraint = job.client == *signer.key)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [JOB_SEED.as_bytes(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
+    #[account(mut, seeds = [JOB_SEED.as_bytes().as_ref(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
     pub job: Box<Account<'info, Job>>,
     #[account(
         mut, 
-        seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()], 
+        seeds = [VAULT_SEED.as_bytes().as_ref(), &job.to_account_info().key.clone().as_ref()], 
         bump=job.vault_bump,
         constraint = vault.mint == currency.to_account_info().key.clone()
     )]
@@ -274,11 +284,11 @@ pub struct CancelJob<'info> {
 pub struct StartJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [JOB_SEED.as_bytes(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
+    #[account(mut, seeds = [JOB_SEED.as_bytes().as_ref(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
     pub job: Box<Account<'info, Job>>,
     #[account(
         init,
-        seeds = [SUBMISSION_SEED.as_bytes(), worker.as_ref(), &job.to_account_info().key.clone().as_ref()],
+        seeds = [SUBMISSION_SEED.as_bytes().as_ref(), worker.as_ref(), &job.to_account_info().key.clone().as_ref()],
         bump,
         payer = signer,
         space = Submission::SPACE
@@ -291,33 +301,54 @@ pub struct StartJob<'info> {
 pub struct PublishSubmission<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [SUBMISSION_SEED.as_bytes(), &submission.worker.as_ref(), &submission.job.as_ref()], bump=submission.bump)]
+    #[account(mut, seeds = [SUBMISSION_SEED.as_bytes().as_ref(), &submission.worker.as_ref(), &submission.job.as_ref()], bump=submission.bump)]
     pub submission: Box<Account<'info, Submission>>,
 }
 
 #[derive(Accounts)]
 pub struct ValidateSubmission<'info> {
-    #[account(mut)]
+    #[account(mut, constraint = job.validator == *signer.key)]
     pub signer: Signer<'info>,
-    #[account(mut)]
-    pub task: Box<Account<'info, Job>>,
-    #[account(mut)]
+    #[account(mut, seeds = [SUBMISSION_SEED.as_bytes().as_ref(), &submission.worker.as_ref(), &submission.job.as_ref()], bump=submission.bump)]
     pub submission: Box<Account<'info, Submission>>,
-    pub token_program: Program<'info, Token>,
+    #[account(mut, seeds = [JOB_SEED.as_bytes().as_ref(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
+    pub job: Box<Account<'info, Job>>,
 }
 
 #[derive(Accounts)]
 pub struct ClaimReward<'info> {
-    #[account(mut)]
+    #[account(mut, constraint = submission.worker == *signer.key)]
     pub signer: Signer<'info>,
-    #[account(mut)]
-    pub task: Box<Account<'info, Job>>,
-    #[account(mut)]
-    pub vault: Box<Account<'info, TokenAccount>>,
-    #[account(mut)]
+
+    #[account(mut, 
+        seeds = [JOB_SEED.as_bytes().as_ref(), job.client.as_ref(), &job.index.to_le_bytes()], 
+        bump=job.bump,
+        constraint = job.state == JobState::VALIDATED
+    )]
+    pub job: Box<Account<'info, Job>>,
+    
+    #[account(mut, 
+        seeds = [SUBMISSION_SEED.as_bytes().as_ref(), &submission.worker.as_ref(), &submission.job.as_ref()], 
+        bump=submission.bump,
+        constraint = submission.job == job.to_account_info().key.clone(),
+        constraint = submission.is_winner == true
+    )]
     pub submission: Box<Account<'info, Submission>>,
-    #[account(mut)]
-    pub winner_token_account: Box<Account<'info, TokenAccount>>,
+    
+    #[account(
+        mut, 
+        seeds = [VAULT_SEED.as_bytes().as_ref(), submission.job.as_ref()], 
+        bump=job.vault_bump,
+        constraint = vault.mint == job.currency.clone()
+    )]
+    pub vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut, 
+        constraint = winning_token_account.mint == vault.mint,
+        constraint = winning_token_account.owner == signer.key.clone()
+    )]
+    pub winning_token_account: Box<Account<'info, TokenAccount>>,
     pub token_program: Program<'info, Token>,
 }
 
@@ -347,6 +378,7 @@ pub struct Job {
     pub winner: Pubkey,        // 32 bytes
     pub validator: Pubkey,     // 32 bytes
     pub submission_count: u64, // 8 bytes
+    pub winning_submission: Pubkey, // 32 bytes
 
     pub price: u64,       // 8 bytes
     pub currency: Pubkey, // 32 bytes
@@ -401,8 +433,8 @@ impl<'info> CancelJob<'info> {
             authority: self.vault.to_account_info(),
         };
         let seeds = vec![
-            VAULT_SEED.as_bytes(),
-            &self.job.to_account_info().key.clone().as_ref(),
+            VAULT_SEED.as_bytes().as_ref(),
+            self.job.to_account_info().key.clone().as_ref(),
         ];
         CpiContext::new_with_signer(
             self.token_program.to_account_info(),
@@ -416,14 +448,14 @@ impl<'info> ClaimReward<'info> {
     fn into_transfer_to_worker_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
         let cpi_accounts = Transfer {
             from: self.vault.to_account_info(),
-            to: self.winner_token_account.to_account_info(),
+            to: self.winning_token_account.to_account_info(),
             authority: self.vault.to_account_info(),
         };
-        let seeds = vec![
-            VAULT_SEED.as_bytes(),
-            &self.task.job_id.as_ref(),
-            &self.task.bump.to_le_bytes(),
+        let seeds= vec![
+            VAULT_SEED.as_bytes().as_ref(),
+            self.submission.job.as_ref(),
         ];
+        // let seeds = vec![seeds.as_slice()];
         CpiContext::new_with_signer(
             self.token_program.to_account_info(),
             cpi_accounts,
@@ -437,10 +469,10 @@ impl Client {
 }
 
 impl Job {
-    const SPACE: usize = 8 + (5 * 32) + (8 * 5) + 14 + 14 + 54 + 1 + 1 +1 + 10;
+    const SPACE: usize = 8 + (6 * 32) + (8 * 5) + 14 + 14 + 54 + 1 + 1 +1 + 10;
     // const SPACE: usize = 1 + 8 + 32 + 32 + 32 + 32 + (4 + 10) + 8 + (1 + 32) + (4 + 20) + 8 + 8 + 8 + 1 + (32 * 5) + 8;
     // const SPACE: usize = 1 + (4 + 10) + (1 + 32) + (4 + 20) + 1 + (32 * 5 + 4) + (8 * 6);
-    // const SEEDS = [owner.key.as_ref(), CLIENT_SEED.as_bytes(), &client.job_count.to_le_bytes()]
+    // const SEEDS = [owner.key.as_ref(), CLIENT_SEED.as_bytes().as_ref(), &client.job_count.to_le_bytes()]
 }
 
 impl Submission {
