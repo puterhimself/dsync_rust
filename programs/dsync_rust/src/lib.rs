@@ -1,4 +1,4 @@
-use core::slice::SlicePattern;
+// use core::slice::SlicePattern;
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{
@@ -29,11 +29,11 @@ pub mod dsync_rust {
 
     // const (TOKEN_AUTHORITY, _bump) = Pubkey::find_program_address(&[AUTHORITY_SEED.as_bytes()], ctx.program_id);
 
-    pub fn initialize_client(ctx: Context<InitializeClient>) -> Result<()> {
-        let client = &mut ctx.accounts.client;
-        client.owner = *ctx.accounts.owner.key;
-        client.bump = *ctx.bumps.get(CLIENT_SEED).unwrap();
+    pub fn initialize_client(ctx: Context<InitializeClient>, _client: Pubkey) -> Result<()> {
+        let client = &mut ctx.accounts.client;  
+        client.owner = _client; // added for convinience otherwise just bump with seed is enough.
         client.job_count = 0;
+        client.bump = *ctx.bumps.get(CLIENT_SEED).unwrap();
         Ok(())
     }
 
@@ -149,14 +149,15 @@ pub mod dsync_rust {
 }
 
 #[derive(Accounts)]
+#[instruction(_client: Pubkey)]
 pub struct InitializeClient<'info> {
     #[account(mut)]
-    pub owner: Signer<'info>,
+    pub signer: Signer<'info>,
     #[account(
         init,
-        seeds = [CLIENT_SEED.as_bytes()],
+        seeds = [CLIENT_SEED.as_bytes(), _client.as_ref()],
         bump,
-        payer = owner,
+        payer = signer,
         space = Client::SPACE
     )]
     pub client: Box<Account<'info, Client>>,
@@ -292,6 +293,13 @@ pub struct Client {
     pub bump: u8,
     pub owner: Pubkey,
     pub job_count: u64,
+
+    /*
+     *EXTRA VALUES that can be added
+        * pub client_name: String,
+        * pub total_jobs: u64,
+        * pub total_staked: u128,
+     */
 }
 
 #[account]
