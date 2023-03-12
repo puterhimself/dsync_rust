@@ -64,6 +64,15 @@ pub mod dsync_rust {
         _task.publish_date = Clock::get().unwrap().unix_timestamp;
         _task.deadline = _deadline;
         _task.vault_token_account = ctx.accounts.vault.to_account_info().key.clone();
+
+        let (vault_authority, _vault_authority_bump) =
+            Pubkey::find_program_address(&[AUTHORITY_SEED.as_bytes()], ctx.program_id);
+
+        token::set_authority(
+            ctx.accounts.set_authority(),
+            AuthorityType::AccountOwner,
+            Some(vault_authority),
+        )?;
         // _task.client_token_account = ctx
         //     .accounts
         //     .client_token_account
@@ -88,18 +97,25 @@ pub mod dsync_rust {
     }
 
     pub fn cancel_job(ctx: Context<CancelJob>) -> Result<()> {
-        let _task = &mut ctx.accounts.job;
+        // let _task = &mut ctx.accounts.job;
+        let (_vault_authority, vault_authority_bump) = Pubkey::find_program_address(&[AUTHORITY_SEED.as_bytes()], ctx.program_id);
+        let bumps = &[vault_authority_bump];
+        let authority_seed = &[AUTHORITY_SEED.as_bytes().as_ref(), bumps][..];
+        let authority_seeds = authority_seed;
 
-        if _task.state == JobState::PUBLISHED || _task.state == JobState::PENDING{
+
+
+        if ctx.accounts.job.state == JobState::PUBLISHED || ctx.accounts.job.state == JobState::PENDING{
             token::transfer(
-                ctx.accounts.into_transfer_to_client_context(),
+                ctx.accounts.into_transfer_to_client_context()
+                .with_signer(&[&authority_seeds[..]]),
                 ctx.accounts.job.price,
             )?;
         }
         else{
             panic!("DSYNC_ERROR: Cannot cancel an active job")
         }
-        _task.state = JobState::CANCELED;
+        ctx.accounts.job.state = JobState::CANCELED;
 
         // token::set_authority(
         //     ctx.accounts.into_set_authority_context(),
@@ -160,19 +176,24 @@ pub mod dsync_rust {
     }
 
     pub fn calim_reward(ctx: Context<ClaimReward>) -> Result<()> {
-        let _task = &mut ctx.accounts.job;
-        let _sub = &mut ctx.accounts.submission;
+        let (_vault_authority, vault_authority_bump) = Pubkey::find_program_address(&[AUTHORITY_SEED.as_bytes()], ctx.program_id);
+        let bumps = &[vault_authority_bump];
+        let authority_seed = &[AUTHORITY_SEED.as_bytes().as_ref(), bumps][..];
+        let authority_seeds = authority_seed;
+        // let _task = &mut ctx.accounts.job;
+        // let _sub = &mut ctx.accounts.submission;
 
         // _task.state = JobState::COMPLETED;
         // _sub.is_claimed = true;
-        let seeds = vec![
-            VAULT_SEED.as_bytes(),
-            ctx.accounts.job.to_account_info().key.clone().as_ref(),
-        ];
+        // let seeds = vec![
+        //     VAULT_SEED.as_bytes(),
+        //     ctx.accounts.job.to_account_info().key.clone().as_ref(),
+        // ];
 
         token::transfer(
-            ctx.accounts.into_transfer_to_worker_context(),
-            // &[seeds.as_slice()],
+            ctx.accounts
+            .into_transfer_to_worker_context()
+            .with_signer(&[&authority_seeds[..]]),
             ctx.accounts.job.price,
         )?;
         Ok(())
@@ -218,7 +239,7 @@ pub struct InitializeJob<'info> {
         bump,
         payer = signer,
         token::mint = currency,
-        token::authority = vault
+        token::authority = signer,
     )]
     pub vault: Box<Account<'info, TokenAccount>>,
 
@@ -414,6 +435,15 @@ impl Default for JobState {
     }
 }
 
+impl<'info> InitializeJob<'info> {
+    fn set_authority(&self) -> CpiContext<'_, '_, '_, 'info, SetAuthority<'info>> {
+        let cpi_accounts = SetAuthority {
+            account_or_mint: self.vault.to_account_info(),
+            current_authority: self.signer.to_account_info(),
+        };
+        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+    }
+}
 impl<'info> PublishJob<'info> {
     fn into_transfer_to_pda_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
         let cpi_accounts = Transfer {
@@ -430,17 +460,22 @@ impl<'info> CancelJob<'info> {
         let cpi_accounts = Transfer {
             from: self.vault.to_account_info(),
             to: self.client_token_account.to_account_info(),
-            authority: self.vault.to_account_info(),
+            authority: self.vault.to_account_info().clone(),
         };
-        let seeds = vec![
-            VAULT_SEED.as_bytes().as_ref(),
-            self.job.to_account_info().key.clone().as_ref(),
-        ];
-        CpiContext::new_with_signer(
-            self.token_program.to_account_info(),
-            cpi_accounts,
-            &[seeds.as_slice()],
-        )
+        // let seeds = vec![
+        //     VAULT_SEED.as_bytes().as_ref(),
+        //     self.job.to_account_info().key.clone().as_ref(),
+        // ];
+        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+        // .with_signer(
+        //     &[
+        //         &[
+        //             VAULT_SEED.as_bytes().as_ref(),
+        //             self.job.to_account_info().key.clone().as_ref(), 
+        //             &[self.job.vault_bump]
+        //         ]
+        //     ]
+        // )
     }
 }
 
@@ -451,15 +486,14 @@ impl<'info> ClaimReward<'info> {
             to: self.winning_token_account.to_account_info(),
             authority: self.vault.to_account_info(),
         };
-        let seeds= vec![
-            VAULT_SEED.as_bytes().as_ref(),
-            self.submission.job.as_ref(),
-        ];
+        // let seeds= vec![
+        //     VAULT_SEED.as_bytes(),
+        //     self.submission.job.as_ref(),
+        // ];
         // let seeds = vec![seeds.as_slice()];
-        CpiContext::new_with_signer(
+        CpiContext::new(
             self.token_program.to_account_info(),
             cpi_accounts,
-            &[seeds.as_slice()],
         )
     }
 }
