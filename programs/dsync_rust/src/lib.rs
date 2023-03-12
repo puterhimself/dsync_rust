@@ -90,13 +90,19 @@ pub mod dsync_rust {
     }
 
     pub fn cancel_job(ctx: Context<CancelJob>) -> Result<()> {
-        let _task = &mut ctx.accounts.task;
+        let _task = &mut ctx.accounts.job;
+
+        if _task.state == JobState::PUBLISHED || _task.state == JobState::PENDING{
+            token::transfer(
+                ctx.accounts.into_transfer_to_client_context(),
+                ctx.accounts.job.price,
+            )?;
+        }
+        else{
+            panic!("DSYNC_ERROR: Cannot cancel an active job")
+        }
         _task.state = JobState::CANCELED;
 
-        token::transfer(
-            ctx.accounts.into_transfer_to_client_context(),
-            ctx.accounts.task.price,
-        )?;
         // token::set_authority(
         //     ctx.accounts.into_set_authority_context(),
         //     AuthorityType::AccountOwner,
@@ -105,9 +111,25 @@ pub mod dsync_rust {
         Ok(())
     }
 
-    pub fn start_job(ctx: Context<StartJob>) -> Result<()> {
-        let _task = &mut ctx.accounts.task;
-        _task.state = JobState::ACTIVE;
+    pub fn start_job(ctx: Context<StartJob>, _worker: Pubkey) -> Result<()> {
+        let _task = &mut ctx.accounts.job;
+        let _sub = &mut ctx.accounts.submission;
+
+        if _task.state == JobState::CANCELED {
+            panic!("DSYNC_ERROR: Cannot start a canceled job")
+        }
+        if _task.state == JobState::COMPLETED  || _task.state == JobState::VALIDATED{
+            panic!("DSYNC_ERROR: Job Done!, try starting another job")
+        }
+        if _task.state != JobState::ACTIVE {
+            _task.state = JobState::ACTIVE;
+        }
+
+        _sub.bump = *ctx.bumps.get(SUBMISSION_SEED).unwrap();
+        _sub.job = _task.to_account_info().key.clone();
+        _sub.worker = _worker;
+        _sub.submission_started = Clock::get().unwrap().unix_timestamp;
+
         Ok(())
     }
 
@@ -231,26 +253,42 @@ pub struct PublishJob<'info> {
 pub struct CancelJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut)]
-    pub task: Box<Account<'info, Job>>,
-    #[account(mut)]
+    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), &job.client.as_ref()], bump=job.bump)]
+    pub job: Box<Account<'info, Job>>,
+    #[account(
+        mut, 
+        seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()], 
+        bump=job.vault_bump,
+        constraint = vault.mint == currency.to_account_info().key.clone()
+    )]
     pub vault: Box<Account<'info, TokenAccount>>,
+    
+    #[account(
+        mut, 
+        constraint = 
+        client_token_account.mint == vault.mint
+    )]
     pub client_token_account: Box<Account<'info, TokenAccount>>,
     pub currency: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
+#[instruction(worker: Pubkey)]
 pub struct StartJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut)]
-    pub task: Box<Account<'info, Job>>,
-    // #[account(mut)]
-    // pub vault: Box<Account<'info, TokenAccount>>,
-    // pub client_token_account: Box<Account<'info, TokenAccount>>,
-    // pub currency: Account<'info, Mint>,
-    // pub token_program: Program<'info, Token>,
+    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), &job.client.as_ref()], bump=job.bump)]
+    pub job: Box<Account<'info, Job>>,
+    #[account(
+        init,
+        seeds = [SUBMISSION_SEED.as_bytes(), worker.as_ref(), &job.to_account_info().key.clone().as_ref()],
+        bump,
+        payer = signer,
+        space = Submission::SPACE
+    )]
+    pub submission: Box<Account<'info, Submission>>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -348,6 +386,7 @@ pub struct Submission {
     pub bump: u8,
     pub job: Pubkey,
     pub worker: Pubkey,
+    pub submission_started: i64,
     // pub submission_id: String,
     pub submission_hash: String,
     pub submission_date: i64,
@@ -382,8 +421,7 @@ impl<'info> CancelJob<'info> {
         };
         let seeds = vec![
             VAULT_SEED.as_bytes(),
-            &self.task.job_id.as_ref(),
-            &self.task.bump.to_le_bytes(),
+            &self.job.to_account_info().key.clone().as_ref(),
         ];
         CpiContext::new_with_signer(
             self.token_program.to_account_info(),
