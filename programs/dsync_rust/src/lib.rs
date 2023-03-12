@@ -85,7 +85,7 @@ pub mod dsync_rust {
             ctx.accounts.job.price,
         )?;
 
-        
+
         Ok(())
     }
 
@@ -211,13 +211,17 @@ pub struct PublishJob<'info> {
     pub job: Box<Account<'info, Job>>,
     #[account(
         mut, 
-        // seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()], 
-        // bump=vault.bump,
+        seeds = [VAULT_SEED.as_bytes(), &job.to_account_info().key.clone().as_ref()], 
+        bump=job.vault_bump,
         constraint = vault.mint == currency.to_account_info().key.clone()
     )]
     pub vault: Box<Account<'info, TokenAccount>>,
     
-    #[account(mut, constraint = client_token_account.mint == vault.mint)]
+    #[account(
+        mut, 
+        constraint = 
+            client_token_account.mint == vault.mint
+    )]
     pub client_token_account: Box<Account<'info, TokenAccount>>,
     pub currency: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
@@ -333,6 +337,7 @@ pub struct Job {
     pub deadline: i64,     // 8 bytes
 
     pub vault_token_account: Pubkey, // 32 bytes
+    pub vault_bump: u8,             // 1 byte
     // pub client_token_account: Pubkey,   // 32 bytes
     // pub validator_token_account: Pubkey,    // 32 bytes
     // pub winner_token_account: Pubkey,  // 32 bytes
@@ -413,7 +418,7 @@ impl Client {
 }
 
 impl Job {
-    const SPACE: usize = 8 + (5 * 32) + (8 * 5) + 14 + 14 + 54 + 1 + 1 + 10;
+    const SPACE: usize = 8 + (5 * 32) + (8 * 5) + 14 + 14 + 54 + 1 + 1 +1 + 10;
     // const SPACE: usize = 1 + 8 + 32 + 32 + 32 + 32 + (4 + 10) + 8 + (1 + 32) + (4 + 20) + 8 + 8 + 8 + 1 + (32 * 5) + 8;
     // const SPACE: usize = 1 + (4 + 10) + (1 + 32) + (4 + 20) + 1 + (32 * 5 + 4) + (8 * 6);
     // const SEEDS = [owner.key.as_ref(), CLIENT_SEED.as_bytes(), &client.job_count.to_le_bytes()]
