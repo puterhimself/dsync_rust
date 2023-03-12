@@ -11,6 +11,7 @@ const CLIENT_SEED: &str = "DSYNC_CLIENT";
 const VAULT_SEED: &str = "DSYNC_VAULT";
 const AUTHORITY_SEED: &str = "DSYNC_AUTHORITY";
 const JOB_SEED: &str = "DSYNC_JOB";
+const SUBMISSION_SEED: &str = "DSYNC_SUBMISSION";
 
 #[derive(Clone, Debug, PartialEq, AnchorSerialize, AnchorDeserialize, Copy)]
 pub enum JobState {
@@ -99,7 +100,25 @@ pub mod dsync_rust {
         Ok(())
     }
 
-    
+    pub fn start_job(ctx: Context<StartJob>) -> Result<()> {
+        let _task = &mut ctx.accounts.task;
+        _task.state = JobState::ACTIVE;
+        Ok(())
+    }
+
+    pub fn post_submission(ctx: Context<PostSubmission>, _hash: String) -> Result<()> {
+        let _task = &mut ctx.accounts.task;
+        let _sub = &mut ctx.accounts.submission;
+
+        // _task.submission_count += 1;
+        _sub.bump = *ctx.bumps.get(SUBMISSION_SEED).unwrap();
+        _sub.job = _task.to_account_info().key.clone();
+        _sub.worker = *ctx.accounts.worker.key;
+        _sub.submission_date = Clock::get().unwrap().unix_timestamp;
+        _sub.submission_hash = _hash;
+
+        Ok(())
+    }
 
 }
 
@@ -191,6 +210,46 @@ pub struct StartJob<'info> {
     // pub token_program: Program<'info, Token>,
 }
 
+#[derive(Accounts)]
+pub struct PostSubmission<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    pub worker: AccountInfo<'info>,
+    #[account(mut)]
+    pub task: Box<Account<'info, Job>>,
+    #[account(
+        init,
+        seeds = [SUBMISSION_SEED.as_bytes(), worker.key.as_ref(), &task.to_account_info().key.clone().as_ref()],
+        bump,
+        payer = signer,
+        space = Submission::SPACE
+    )]
+    pub submission: Box<Account<'info, Submission>>,
+    pub system_program: Program<'info, System>,
+
+    // #[account(mut)]
+    // pub vault: Box<Account<'info, TokenAccount>>,
+    // pub client_token_account: Box<Account<'info, TokenAccount>>,
+    // pub currency: Account<'info, Mint>,
+    // pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimReward<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub task: Box<Account<'info, Job>>,
+    #[account(mut)]
+    pub vault: Box<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub submission: Box<Account<'info, Submission>>,
+    #[account(mut)]
+    pub winner_token_account: Box<Account<'info, TokenAccount>>,
+    pub token_program: Program<'info, Token>,
+}
+
+
 #[account]
 pub struct Client {
     pub bump: u8,
@@ -224,6 +283,18 @@ pub struct Job {
     pub winner_token_account: Pubkey,
     pub vault_token_account: Pubkey,
 }
+
+#[account]
+pub struct Submission {
+    pub bump: u8,
+    pub job: Pubkey,
+    pub worker: Pubkey,
+    // pub submission_id: String,
+    pub submission_hash: String,
+    pub submission_date: i64,
+}
+
+
 
 impl Default for JobState {
     fn default() -> Self {
@@ -270,6 +341,26 @@ impl<'info> CancelJob<'info> {
     }
 }
 
+impl<'info> ClaimReward<'info> {
+    fn into_transfer_to_client_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: self.vault.to_account_info(),
+            to: self.winner_token_account.to_account_info(),
+            authority: self.vault.to_account_info(),
+        };
+        let seeds = vec![
+            VAULT_SEED.as_bytes(),
+            &self.task.job_id.as_ref(),
+            &self.task.bump.to_le_bytes(),
+        ];
+        CpiContext::new_with_signer(
+            self.token_program.to_account_info(), 
+            cpi_accounts,
+            &[seeds.as_slice()]
+        )
+    }
+}
+
 impl Client {
     const SPACE: usize = 32 + 1 + 8 + 8;
 }
@@ -278,4 +369,8 @@ impl Job {
     // const SPACE: usize = 1 + 8 + 32 + 32 + 32 + 32 + (4 + 10) + 8 + (1 + 32) + (4 + 20) + 8 + 8 + 8 + 1 + (32 * 5) + 8;
     const SPACE: usize = 1 + (4 + 10) + (1 + 32) + (4 + 20) + 1 + (32 * 5 + 4) + (8 * 6);
     // const SEEDS = [owner.key.as_ref(), CLIENT_SEED.as_bytes(), &client.job_count.to_le_bytes()]
+}
+
+impl Submission {
+    const SPACE: usize = 1 + 32 + 32 + (4 + 50) + 8;
 }
