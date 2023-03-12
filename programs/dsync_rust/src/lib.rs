@@ -120,6 +120,32 @@ pub mod dsync_rust {
         Ok(())
     }
 
+    pub fn validate_submission(ctx: Context<ValidateSubmission>) -> Result<()> {
+        let _task = &mut ctx.accounts.task;
+        let _sub = &mut ctx.accounts.submission;
+
+        _task.state = JobState::VALIDATED;
+        _sub.is_validated = true;
+        //for now only one approval process for winning
+        // at scale this will just validate a submission without declaring it a winner
+        _sub.is_winner = true;
+        Ok(())
+    }
+
+    pub fn calim_reward(ctx: Context<ClaimReward>) -> Result<()> {
+        let _task = &mut ctx.accounts.task;
+        let _sub = &mut ctx.accounts.submission;
+
+        _task.state = JobState::COMPLETED;
+        // _sub.is_claimed = true;
+
+        token::transfer(
+            ctx.accounts.into_transfer_to_worker_context(),
+            ctx.accounts.task.price,
+        )?;
+        Ok(())
+    }
+
 }
 
 #[derive(Accounts)]
@@ -235,6 +261,17 @@ pub struct PostSubmission<'info> {
 }
 
 #[derive(Accounts)]
+pub struct ValidateSubmission<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub task: Box<Account<'info, Job>>,
+    #[account(mut)]
+    pub submission: Box<Account<'info, Submission>>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
 pub struct ClaimReward<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
@@ -292,6 +329,9 @@ pub struct Submission {
     // pub submission_id: String,
     pub submission_hash: String,
     pub submission_date: i64,
+
+    pub is_validated: bool,
+    pub is_winner: bool,
 }
 
 
@@ -342,7 +382,7 @@ impl<'info> CancelJob<'info> {
 }
 
 impl<'info> ClaimReward<'info> {
-    fn into_transfer_to_client_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+    fn into_transfer_to_worker_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
         let cpi_accounts = Transfer {
             from: self.vault.to_account_info(),
             to: self.winner_token_account.to_account_info(),
