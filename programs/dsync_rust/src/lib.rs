@@ -229,7 +229,7 @@ pub struct InitializeJob<'info> {
 pub struct PublishJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), &job.client.as_ref()], bump=job.bump)]
+    #[account(mut, seeds = [JOB_SEED.as_bytes(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
     pub job: Box<Account<'info, Job>>,
     #[account(
         mut, 
@@ -253,7 +253,7 @@ pub struct PublishJob<'info> {
 pub struct CancelJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), &job.client.as_ref()], bump=job.bump)]
+    #[account(mut, seeds = [JOB_SEED.as_bytes(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
     pub job: Box<Account<'info, Job>>,
     #[account(
         mut, 
@@ -278,7 +278,7 @@ pub struct CancelJob<'info> {
 pub struct StartJob<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
-    #[account(mut, seeds = [CLIENT_SEED.as_bytes(), &job.client.as_ref()], bump=job.bump)]
+    #[account(mut, seeds = [JOB_SEED.as_bytes(), job.client.as_ref(), &job.index.to_le_bytes()], bump=job.bump)]
     pub job: Box<Account<'info, Job>>,
     #[account(
         init,
